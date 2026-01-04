@@ -1,0 +1,10 @@
+[green_agent]
+endpoint = "http://127.0.0.1:9009"
+
+[[participants]]
+role = "analyst"
+endpoint = "http://127.0.0.1:9020"
+
+[config]
+year = "2020"
+cik = "1041514"

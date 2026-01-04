@@ -1,0 +1,16 @@
+{
+  "dataset_name": "Finance 10-K Benchmark for AgentBeats",
+  "description": "Curated subset of SEC 10-K filings (2015-2020) for financial agent evaluation",
+  "years": [
+    "2015",
+    "2016",
+    "2017",
+    "2018",
+    "2019",
+    "2020"
+  ],
+  "total_files": 900,
+  "sample_size_per_year": 150,
+  "source": "SEC EDGAR 10-K filings",
+  "use_case": "Evaluate agent capabilities in financial document analysis, risk assessment, and information extraction"
+}
