@@ -12,8 +12,39 @@ from a2a.types import Message, TaskState, Part, TextPart, DataPart
 from a2a.utils import get_message_text, new_agent_text_message
 
 from messenger import Messenger
+from cache import GroundTruthCache
 
 load_dotenv()
+
+
+def safe_json_parse(raw_text: str) -> dict:
+    """
+    Parse JSON from LLM response, handling markdown code blocks.
+    
+    Args:
+        raw_text: Raw text from LLM that may contain JSON
+        
+    Returns:
+        Parsed JSON dict
+        
+    Raises:
+        json.JSONDecodeError: If parsing fails after cleanup
+    """
+    text = raw_text.strip()
+    
+    # Remove markdown code block markers
+    if text.startswith("```"):
+        # Split by ``` and take the middle part
+        parts = text.split("```")
+        if len(parts) >= 3:
+            text = parts[1]
+            # Remove language identifier (e.g., 'json')
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+    
+    # Try to parse
+    return json.loads(text)
 
 
 class EvalRequest(BaseModel):
@@ -88,6 +119,11 @@ class Agent:
         )
         self._model = os.getenv("MODEL_ID", "deepseek/deepseek-v3.2")
         self._finance_data_path = Path(os.getenv("FINANCE_DATA_PATH", "data"))
+        
+        # Initialize ground truth cache
+        cache_path = self._finance_data_path / "ground_truth_cache.json"
+        self._cache = GroundTruthCache(cache_path)
+        print(f"📦 Cache initialized: {self._cache.stats()}")
 
     def validate_request(self, request: EvalRequest) -> tuple[bool, str]:
         missing_roles = set(self.required_roles) - set(request.participants.keys())
@@ -134,8 +170,14 @@ class Agent:
 
     # ========== TASK 1: RISK CLASSIFICATION ==========
 
-    async def extract_ground_truth_risks(self, filing_data: dict) -> list[str]:
+    async def extract_ground_truth_risks(self, filing_data: dict, cik: str, year: str) -> list[str]:
         """Use LLM to extract and classify risk categories from 10-K Section 1A."""
+        
+        # Check cache first
+        cached = self._cache.get(cik, year, "risk")
+        if cached:
+            return cached["data"]
+        
         section_1a = filing_data.get("section_1A", "")
 
         if not section_1a or len(section_1a) < 100:
@@ -176,13 +218,23 @@ Example format: {{"categories": ["Market Risk", "Operational Risk"]}}
             temperature=0.1
         )
 
-        result = json.loads(response.choices[0].message.content)
+        try:
+            result = safe_json_parse(response.choices[0].message.content)
+        except json.JSONDecodeError as e:
+            print(f"⚠️  Failed to parse LLM response: {e}")
+            return []
+        
         if isinstance(result, dict):
             categories = result.get("categories", result.get("risk_categories", []))
         else:
             categories = result
 
-        return categories if isinstance(categories, list) else []
+        categories_list = categories if isinstance(categories, list) else []
+        
+        # Store in cache
+        self._cache.set(cik, year, "risk", categories_list)
+        
+        return categories_list
 
     async def evaluate_risk_classification(self, agent_result: str, ground_truth: list[str]) -> RiskEvalResult:
         """Compare agent's risk classification with ground truth and score."""
@@ -243,8 +295,14 @@ Example format: {{"categories": ["Market Risk", "Operational Risk"]}}
 
     # ========== TASK 2: BUSINESS SUMMARY ==========
 
-    async def extract_ground_truth_business(self, filing_data: dict) -> dict[str, str]:
+    async def extract_ground_truth_business(self, filing_data: dict, cik: str, year: str) -> dict[str, str]:
         """Extract business summary ground truth from Section 1."""
+        
+        # Check cache first
+        cached = self._cache.get(cik, year, "business")
+        if cached:
+            return cached["data"]
+        
         section_1 = filing_data.get("section_1", "")
 
         if not section_1 or len(section_1) < 100:
@@ -276,12 +334,22 @@ Return as JSON:
             temperature=0.1
         )
 
-        result = json.loads(response.choices[0].message.content)
-        return {
+        try:
+            result = safe_json_parse(response.choices[0].message.content)
+        except json.JSONDecodeError as e:
+            print(f"⚠️  Failed to parse LLM response: {e}")
+            result = {}
+        
+        business_data = {
             "industry": result.get("industry", "N/A"),
             "products": result.get("products", "N/A"),
             "geography": result.get("geography", "N/A")
         }
+        
+        # Store in cache
+        self._cache.set(cik, year, "business", business_data)
+        
+        return business_data
 
     async def evaluate_business_summary(self, agent_result: str, ground_truth: dict[str, str]) -> BusinessSummaryEvalResult:
         """Evaluate business summary quality."""
@@ -326,8 +394,15 @@ Return as JSON:
 
     # ========== TASK 3: CONSISTENCY CHECK ==========
 
-    async def extract_risk_discussions(self, section_1a: str, section_7: str) -> tuple[list[str], list[str]]:
+    async def extract_risk_discussions(self, section_1a: str, section_7: str, cik: str, year: str) -> tuple[list[str], list[str]]:
         """Extract risks mentioned in 1A and discussed in 7."""
+        
+        # Check cache first
+        cached = self._cache.get(cik, year, "consistency")
+        if cached:
+            data = cached["data"]
+            return data["risks_1a"], data["discussed_in_7"]
+        
         if not section_1a or not section_7:
             return [], []
 
@@ -350,7 +425,12 @@ Return as JSON array of risk topics:
             temperature=0.1
         )
 
-        risks_1a_data = json.loads(response.choices[0].message.content)
+        try:
+            risks_1a_data = safe_json_parse(response.choices[0].message.content)
+        except json.JSONDecodeError as e:
+            print(f"⚠️  Failed to parse LLM response: {e}")
+            return [], []
+        
         risks_1a = risks_1a_data.get("risks", [])[:5]  # Limit to top 5
 
         if not risks_1a:
@@ -378,8 +458,20 @@ Return JSON with risks that ARE discussed:
             temperature=0.1
         )
 
-        discussed_data = json.loads(response2.choices[0].message.content)
-        discussed_risks = discussed_data.get("discussed_risks", [])
+        try:
+            discussed_data = safe_json_parse(response2.choices[0].message.content)
+        except json.JSONDecodeError as e:
+            print(f"⚠️  Failed to parse LLM response: {e}")
+            discussed_risks = []
+        else:
+            discussed_risks = discussed_data.get("discussed_risks", [])
+        
+        # Store in cache
+        cache_data = {
+            "risks_1a": risks_1a,
+            "discussed_in_7": discussed_risks
+        }
+        self._cache.set(cik, year, "consistency", cache_data)
 
         return risks_1a, discussed_risks
 
@@ -477,7 +569,7 @@ Return JSON with risks that ARE discussed:
             TaskState.working, new_agent_text_message(f"Task 1/3: Extracting risk categories from CIK {cik}...")
         )
 
-        ground_truth_risks = await self.extract_ground_truth_risks(filing_data)
+        ground_truth_risks = await self.extract_ground_truth_risks(filing_data, cik, year)
 
         if ground_truth_risks:
             section_1a = filing_data.get('section_1A', '')[:12000]
@@ -506,7 +598,7 @@ Return JSON: {{"risk_classification": ["category1", "category2", ...]}}
             TaskState.working, new_agent_text_message("Task 2/3: Evaluating business summary...")
         )
 
-        ground_truth_business = await self.extract_ground_truth_business(filing_data)
+        ground_truth_business = await self.extract_ground_truth_business(filing_data, cik, year)
 
         section_1 = filing_data.get('section_1', '')[:10000]
         task2_prompt = f"""TASK 2: Business Summary
@@ -536,7 +628,9 @@ Return JSON: {{"business_summary": {{"industry": "...", "products": "...", "geog
         if section_7 and len(section_7) > 100:
             risks_1a, discussed_in_7 = await self.extract_risk_discussions(
                 filing_data.get('section_1A', ''),
-                section_7
+                section_7,
+                cik,
+                year
             )
 
             task3_prompt = f"""TASK 3: Consistency Check

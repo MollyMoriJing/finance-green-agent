@@ -29,7 +29,13 @@ uv sync
 # Configure API key
 cp .env.example .env
 # Edit .env and add your OPENROUTER_API_KEY
+
+# (Optional) Validate dataset and environment
+uv run python src/data_utils.py
 ```
+
+> [!IMPORTANT]
+> **Ground Truth Caching**: This agent uses a caching system to ensure reproducible evaluation results. The first evaluation of each 10-K filing will generate and cache the ground truth answers. Subsequent evaluations of the same filing will use the cached results, ensuring consistent benchmark performance.
 
 ### Running Locally
 
@@ -48,12 +54,17 @@ uv run python src/server.py --port 9009
 
 # Terminal 2: Start example purple agent (from parent directory)
 cd ../finance-purple-agent
-uv run python analyst.py --port 9020
+uv run python src/analyst.py --port 9020
 
 # Terminal 3: Run evaluation
 cd ../agentbeats-tutorial
 uv run python -m agentbeats.client_cli ../finance-green-agent/scenario.toml
 ```
+
+**Cache Behavior**:
+- **First run**: Generates ground truth using LLM (~15-25 seconds)
+- **Subsequent runs**: Loads from cache (~instant, <100ms)
+- **Cache location**: `data/ground_truth_cache.json`
 
 ## Evaluation Tasks
 
@@ -376,3 +387,95 @@ For issues or questions:
 1. Check `data/README.md` for dataset details
 2. Review evaluation examples in test files
 3. See A2A protocol documentation for integration help
+
+---
+
+## 📋 Phase 1 提交 TODO 清单
+
+> **截止日期**: 2026-01-16 | **剩余时间**: ~1天
+
+### ✅ 已完成
+
+**核心功能**:
+- [x] Ground Truth 缓存系统（确保可复现性）
+- [x] 三项评估任务实现
+- [x] A2A 协议兼容
+- [x] 单元测试（17个）
+- [x] Dockerfile 配置
+- [x] Baseline Purple Agent
+
+**文档**:
+- [x] README 完整
+- [x] 代码注释
+- [x] 数据验证工具
+
+### ⏳ 待办事项（需队友协助）
+
+#### 1. 🎬 录制 Demo Video（最高优先级）
+**负责人**: ___________  
+**时长**: ≤3分钟  
+**预计**: 30分钟
+
+**脚本**:
+```
+0:00-0:30  项目介绍 + 三项任务说明
+0:30-1:30  启动 Green + Purple Agent
+1:30-2:30  ⭐ 演示缓存机制（第1次慢，第2次快）+ 评分
+2:30-3:00  总结亮点（可复现性、900数据集、多任务）
+```
+
+#### 2. 📤 GitHub 推送（高优先级）
+**负责人**: ___________  
+**预计**: 15分钟
+
+```bash
+# Green Agent
+cd finance-green-agent
+git init
+git add .
+git commit -m "Phase 1: Finance Green Agent with caching"
+git remote add origin YOUR_REPO_URL
+git push -u origin main
+
+# Purple Agent  
+cd finance-purple-agent
+git init
+git add .
+git commit -m "Phase 1: Baseline Purple Agent"
+git remote add origin YOUR_PURPLE_REPO_URL
+git push -u origin main
+```
+
+**检查**: 
+- [ ] 仓库设为 Public
+- [ ] `.env` 未被推送
+
+#### 3. 🌐 AgentBeats 注册（高优先级）
+**负责人**: ___________  
+**预计**: 20分钟
+
+**步骤**:
+1. 访问 https://agentbeats.dev
+2. 注册 Green Agent
+3. 注册 Purple Agent (baseline)
+4. 上传 Demo Video
+5. 提交 Abstract
+
+### 📊 提交材料
+
+- [x] Source Code
+- [ ] Demo Video
+- [x] README
+- [x] Baseline Purple Agent
+- [x] Dockerfile
+- [ ] AgentBeats Registration
+
+### 📞 队友分工
+
+- **队友 A**: Demo Video 录制
+- **队友 B**: GitHub 推送
+- **队友 C**: 平台注册
+
+**预计完成**: 1-2小时
+
+🎯 冲刺 Phase 1！
